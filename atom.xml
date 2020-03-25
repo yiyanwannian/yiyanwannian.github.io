@@ -1,45 +1,877 @@
 <?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
     <id>https://yiyanwannian.github.io</id>
-    <title>Gridea</title>
-    <updated>2020-03-25T04:30:24.374Z</updated>
+    <title>yiyanwannian</title>
+    <updated>2020-03-25T04:54:11.467Z</updated>
     <generator>https://github.com/jpmonette/feed</generator>
     <link rel="alternate" href="https://yiyanwannian.github.io"/>
     <link rel="self" href="https://yiyanwannian.github.io/atom.xml"/>
-    <subtitle>温故而知新</subtitle>
+    <subtitle>记录学习每一步</subtitle>
     <logo>https://yiyanwannian.github.io/images/avatar.png</logo>
     <icon>https://yiyanwannian.github.io/favicon.ico</icon>
-    <rights>All rights reserved 2020, Gridea</rights>
+    <rights>All rights reserved 2020, yiyanwannian</rights>
     <entry>
-        <title type="html"><![CDATA[Hello Gridea]]></title>
-        <id>https://yiyanwannian.github.io/post/hello-gridea/</id>
-        <link href="https://yiyanwannian.github.io/post/hello-gridea/">
+        <title type="html"><![CDATA[EOS整体源码结构之nodeos和keosd]]></title>
+        <id>https://yiyanwannian.github.io/post/EOS整体源码结构之nodeos和keosd/</id>
+        <link href="https://yiyanwannian.github.io/post/EOS整体源码结构之nodeos和keosd/">
         </link>
         <updated>2018-12-11T16:00:00.000Z</updated>
-        <summary type="html"><![CDATA[<p>👏  欢迎使用 <strong>Gridea</strong> ！<br>
-✍️  <strong>Gridea</strong> 一个静态博客写作客户端。你可以用它来记录你的生活、心情、知识、笔记、创意... ...</p>
+        <summary type="html"><![CDATA[<p>EOS是Block.One公司开发的一款超高性能的类操作系统区块链，其设计目标是：支持大量用户，可能是上亿级别的用户， 消除手续费（可以免费使用），超高性能（支持百万级TPS），具备横向和纵向性能扩展能力。本篇文章讲解EOS源码的整体结构中nodeos和keosd部分，后面会有一篇讲cleos的文章。</p>
+<p>EOS由一些列的程序组成，最重要的是三个三个便是：nodeos，cleos，keosd</p>
+<ul>
+<li>nodeos (node + eos = nodeos), eos主节点程序</li>
+<li>cleos (cli + eos = cleos), 命令行程序，用来作为管理发送命令来管理钱包和节点</li>
+<li>keos (key + eos = keosd), 安全的存储keys的钱包组件<br>
+它们的协作关系如下图所示：</li>
+</ul>
+<p>[]jkjkjk</p>
+<p>它们都在<a href="https://github.com/EOSIO/eos">EOS</a>中：</p>
+<p>pragram picture</p>
+<p>1.nodeos</p>
+<p>1.1 整个程序入口</p>
+<pre><code class="language-C++">int main(int argc, char **argv)
+{
+    try
+    {
+        //设定版本号
+        app().set_version(eosio::nodeos::config::version);
+
+        //创建文件存储路径
+        auto root = fc::app_path();
+        app().set_default_data_dir(root / &quot;eosio&quot; / nodeos::config::node_executable_name / &quot;data&quot;);
+        app().set_default_config_dir(root / &quot;eosio&quot; / nodeos::config::node_executable_name / &quot;config&quot;);
+        //设定RPC监听endpoint
+        http_plugin::set_defaults({.default_unix_socket_path = &quot;&quot;, .default_http_port = 8888});
+        //初始化最核心的三个插件
+        if (!app().initialize&lt;chain_plugin, net_plugin, producer_plugin&gt;(argc, argv))
+            return INITIALIZE_FAIL;
+        //初始化日志系统
+        initialize_logging();
+        ...
+        ilog(&quot;${name} using configuration file ${c}&quot;, (&quot;name&quot;, nodeos::config::node_executable_name)( &quot;c&quot;, app().full_config_file_path().string()));
+        ...
+        //启动程序
+        app().startup();
+        //维持程序一直运行不停下
+        app().exec();
+    }
+    catch (const extract_genesis_state_exception &amp;e)
+    {
+        ....
+    }
+
+    ilog(&quot;${name} successfully exiting&quot;, (&quot;name&quot;, nodeos::config::node_executable_name));
+    return SUCCESS;
+}
+</code></pre>
+<p>1.2 nodeos application的实例：app()</p>
+<p>在libraries/appbase/include/appbase/application.hpp中能看到app()是一个全局变量</p>
+<pre><code class="language-C++">namespace appbase
+{
+...
+class application{...};
+
+//appbase唯一的全局变量
+application &amp;app();
+
+template &lt;typename Impl&gt;
+class plugin : public abstract_plugin{...};
+
+template &lt;typename Data, typename DispatchPolicy&gt;
+void channel&lt;Data, DispatchPolicy&gt;::publish(int priority, const Data &amp;data){...}
+
+} // namespace appbase
+
+</code></pre>
+<p>看看这个唯一的全局变量干了什么</p>
+<pre><code class="language-C++">application &amp;application::instance()
+{
+    static application _app;
+    return _app;
+}
+application &amp;app() { return application::instance(); }
+</code></pre>
+<p>可以看到它是把application对象使用单例模式实例化了，我们简单看看application类的结构</p>
+<pre><code class="language-C++">class application
+{
+public:
+    ~application();
+    
+    //配置处理方法
+    void set_version(uint64_t version);
+    ...
+    bfs::path full_config_file_path() const;
+
+    //处理起停方法
+    void set_sighup_callback(std::function&lt;void()&gt; callback);
+    bool initialize(int argc, char **argv){...}
+    void startup();
+    void shutdown();
+    void exec();
+    void quit();
+    bool is_quiting() const;
+    ...
+
+    //plugin处理方法
+    abstract_plugin *find_plugin(const string &amp;name) const;
+    abstract_plugin &amp;get_plugin(const string &amp;name) const;
+    auto &amp;register_plugin(){...}
+    Plugin *find_plugin() const {...}
+    Plugin &amp;get_plugin() const{...}
+
+    //绑定io_serv和pri_queue.wrap
+    template &lt;typename Func&gt;
+    auto post(int priority, Func &amp;&amp;func)
+    {
+        return boost::asio::post(*io_serv, pri_queue.wrap(priority, std::forward&lt;Func&gt;(func)));
+    }
+
+    //其他
+    ...
+
+private:
+    application();
+    //管理plugin 
+    map&lt;string, std::unique_ptr&lt;abstract_plugin&gt;&gt; plugins;
+    vector&lt;abstract_plugin *&gt; initialized_plugins; 
+    vector&lt;abstract_plugin *&gt; running_plugins; 
+    ...
+    //后面讲exe()用到
+    std::shared_ptr&lt;boost::asio::io_service&gt; io_serv;
+    execution_priority_queue pri_queue;
+    //application_impl 实例指针
+    std::unique_ptr&lt;class application_impl&gt; my;
+};
+</code></pre>
+<p>可以看到里面除了application基本功能的方法，还有很多plugin相关的内容。我们看它怎么用起来</p>
+<p>1.3 plugin的使用从这里开始：app().initialize&lt;...&gt;(argc, argv)，我们追查进去</p>
+<pre><code class="language-C++">//实现如下
+template &lt;typename... Plugin&gt;
+bool initialize(int argc, char **argv)
+{
+    return initialize_impl(argc, argv, {find_plugin&lt;Plugin&gt;()...});
+}
+
+//看find_plugin&lt;Plugin&gt;()...
+template &lt;typename Plugin&gt;
+Plugin *find_plugin() const
+{
+    string name = boost::core::demangle(typeid(Plugin).name());
+    return dynamic_cast&lt;Plugin *&gt;(find_plugin(name));
+}
+
+//看find_plugin(name)
+abstract_plugin *application::find_plugin(const string &amp;name) const
+{
+    auto itr = plugins.find(name);
+    if (itr == plugins.end())
+    {
+        return nullptr;
+    }
+    return itr-&gt;second.get();
+}
+
+//还有initialize_impl
+bool application::initialize_impl(int argc, char **argv, vector&lt;abstract_plugin *&gt; autostart_plugins)
+{
+    set_program_options();
+    ...
+    //这里从启动命令行或者配置文件中获取需要的plugin
+    if (options.count(&quot;plugin&quot;) &gt; 0)
+    {
+        auto plugins = options.at(&quot;plugin&quot;).as&lt;std::vector&lt;std::string&gt;&gt;();
+        for (auto &amp;arg : plugins)
+        {
+            vector&lt;string&gt; names;
+            boost::split(names, arg, boost::is_any_of(&quot; \t,&quot;));
+            for (const std::string &amp;name : names)
+                get_plugin(name).initialize(options);
+        }
+    }
+    try
+    {
+        //这里是app().initialize&lt;...&gt;中传入的三个plugin
+        for (auto plugin : autostart_plugins)
+            if (plugin != nullptr &amp;&amp; plugin-&gt;get_state() == abstract_plugin::registered)
+                plugin-&gt;initialize(options);
+                
+        ...
+    }
+    catch (...) {...}
+
+    return true;
+}
+
+//看plugin.initialize(options),在plugin中
+virtual void initialize(const variables_map &amp;options) override
+{
+    //_state的默认值设定的就是abstract_plugin::registered
+    if (_state == registered)
+    {
+        _state = initialized;
+        static_cast&lt;Impl *&gt;(this)-&gt;plugin_requires([&amp;](auto &amp;plug) { plug.initialize(options); });
+        static_cast&lt;Impl *&gt;(this)-&gt;plugin_initialize(options);
+        app().plugin_initialized(*this);
+    }
+    assert(_state == initialized);
+}
+
+//看app().plugin_initialized(*this);
+void plugin_initialized(abstract_plugin &amp;plug) { initialized_plugins.push_back(&amp;plug); }
+</code></pre>
+<p>由此我们可以看到app().initialize做的事情，就是找到需要的插件，然后注册注册插件依赖的插件，然后将它们存到appllication的initialized_plugins中</p>
+<p>1.4 启动application: app().startup(), 就是调用appllication的initialized_plugins每个plugin的startup方法，使得需要的plugin都运行起来</p>
+<pre><code class="language-C++">void application::startup()
+{
+    try
+    {
+        for (auto plugin : initialized_plugins)
+        {
+            if (is_quiting())
+                break;
+            plugin-&gt;startup();
+        }
+    }
+    catch (...){...}
+}
+</code></pre>
+<p>1.5 开始运行：app().exec();</p>
+<pre><code class="language-C++">void application::exec()
+{
+    boost::asio::io_service::work work(*io_serv);
+    (void)work;
+    bool more = true;
+    while (more || io_serv-&gt;run_one())
+    {
+        while (io_serv-&gt;poll_one())
+        {
+        }
+        // execute the highest priority item
+        more = pri_queue.execute_highest();
+    }
+
+    shutdown(); /// perform synchronous shutdown
+    io_serv.reset();
+}
+</code></pre>
+<p>boost::asio::io_service::work使得io_serv不会执行完任务就立即退出，保证nodeos一直运行着，exec()里面还包含shutdown(),运行时，调用每个plugin的shutdown(),然后从aplication的pulgins中移除，然后清空running_plugins，initialized_plugins，plugins。最后调用io_serv.stop()</p>
+<p>1.6 执行所有的任务: pri_queue.execute_highest();</p>
+<p>nodeos使用io_serv和pri_queue，通过app().post(...)将任务添加进来，这些任务包含处理P2P信息，所有RPC请求，处理进来的交易等,包含了大部分nodeos要做的事情。<br>
+我们抽取几个重要部分的代码。将实现过程展现出来，对于boost::asio::io_service不了解的同学还请自行查找资料学习，里面的东西很多。</p>
+<pre><code class="language-C++">//appbase/application.hpp中将io_serv和pri_queue绑定在一起，
+//将pri_queue中的任务通过app().post()传入io_serv中。
+//pri_queue是nodeos自己实现了一个优先级队列
+template &lt;typename Func&gt;
+    auto post(int priority, Func &amp;&amp;func)
+    {
+        return boost::asio::post(*io_serv, pri_queue.wrap(priority, std::forward&lt;Func&gt;(func)));
+    }
+
+//pri_queue的实现过程
+//定义优先级别，咱们在之前的RPC运行讲解时就曾看到过
+struct priority
+{
+    static constexpr int high = 100;
+    static constexpr int medium = 50;
+    static constexpr int low = 10;
+};
+
+//我们简取部分重要代码
+class execution_priority_queue : public boost::asio::execution_context
+{
+public:
+    //handlers_就是用来存储优先级和具体队列的地方，后面能看到定义
+    template &lt;typename Function&gt;
+    void add(int priority, Function function)
+    {
+        std::unique_ptr&lt;queued_handler_base&gt; handler(
+            //组建带有优先级的任务的queued_handler
+            new queued_handler&lt;Function&gt;(priority, --order_, std::move(function)));
+
+        //添加新的带有优先级的任务(方法)
+        handlers_.push(std::move(handler));
+    }
+    
+    //执行所有任务
+    void execute_all()
+    {
+        while (!handlers_.empty())
+        {
+            handlers_.top()-&gt;execute();
+            handlers_.pop();
+        }
+    }
+
+    //执行优先级最高的方法，app().exec()里面调用的就是这里
+    bool execute_highest()
+    {
+        if (!handlers_.empty())
+        {
+            handlers_.top()-&gt;execute();
+            handlers_.pop();
+        }
+
+        return !handlers_.empty();
+    }
+
+    //查看总共有多少任务
+    size_t size() { return handlers_.size(); }
+
+    class executor
+    {
+    public:
+        executor(execution_priority_queue &amp;q, int p)
+            : context_(q), priority_(p)
+        {
+        }
+
+        execution_priority_queue &amp;context() const noexcept
+        {
+            return context_;
+        }
+
+        ...
+        template &lt;typename Function, typename Allocator&gt;
+        void post(Function f, const Allocator &amp;) const
+        {
+            //添加带有优先级的任务(方法)
+            context_.add(priority_, std::move(f));
+        }
+        ...
+
+        //比较优先级的重载
+        bool operator==(const executor &amp;other) const noexcept
+        {
+            return &amp;context_ == &amp;other.context_ &amp;&amp; priority_ == other.priority_;
+        }
+        ...
+
+    private:
+        execution_priority_queue &amp;context_;
+        int priority_;
+    };
+
+    //这里就是绑定io_serv和pri_queue调用的方法
+    template &lt;typename Function&gt;
+    boost::asio::executor_binder&lt;Function, executor&gt;
+    wrap(int priority, Function &amp;&amp;func)
+    {
+        return boost::asio::bind_executor(executor(*this, priority), std::forward&lt;Function&gt;(func));
+    }
+
+private:
+    class queued_handler_base
+    {
+    public:
+        ...
+
+        //比较优先级的重载
+        friend bool operator&lt;(const std::unique_ptr&lt;queued_handler_base&gt; &amp;a,
+                              const std::unique_ptr&lt;queued_handler_base&gt; &amp;b) noexcept
+        {
+            return std::tie(a-&gt;priority_, a-&gt;order_) &lt; std::tie(b-&gt;priority_, b-&gt;order_);
+        }
+
+    private:
+        int priority_;
+        size_t order_;
+    };
+
+    template &lt;typename Function&gt;
+    class queued_handler : public queued_handler_base
+    {
+    public:
+        queued_handler(int p, size_t order, Function f)
+            : queued_handler_base(p, order), function_(std::move(f))
+        {
+        }
+
+        //执行任务(方法)
+        void execute() override
+        {
+            function_();
+        }
+
+    private:
+        Function function_;
+    };
+
+    //保存所有任务和优先级的handlers_
+    std::priority_queue&lt;std::unique_ptr&lt;queued_handler_base&gt;, std::deque&lt;std::unique_ptr&lt;queued_handler_base&gt;&gt;&gt; handlers_;
+    std::size_t order_ = std::numeric_limits&lt;size_t&gt;::max(); // to maintain FIFO ordering in queue within priority
+};
+</code></pre>
+<p>1.7 再来说一下plugin结构，每个plugin都继承于abstract_plugin，结构如下，从上面的讲解中能看出app()是怎么使用的</p>
+<pre><code class="language-C++">namespace appbase {
+   class abstract_plugin {
+      public:
+         enum state {
+            registered, ///&lt; the plugin is constructed but doesn't do anything
+            initialized, ///&lt; the plugin has initialized any state required but is idle
+            started, ///&lt; the plugin is actively running
+            stopped ///&lt; the plugin is no longer running
+         };
+
+         virtual ~abstract_plugin(){}
+         virtual state get_state()const = 0;
+         virtual const std::string&amp; name()const  = 0;
+         virtual void set_program_options( options_description&amp; cli, options_description&amp; cfg ) = 0;
+         virtual void initialize(const variables_map&amp; options) = 0;
+         virtual void handle_sighup() = 0;
+         virtual void startup() = 0;
+         virtual void shutdown() = 0;
+   };
+}
+</code></pre>
+<p>2.keosd</p>
+<p>2.1 keosd的机构和nodeos的一样只是启动的时候用的是wallet_plugin, wallet_api_plugin和http_plugin</p>
+<pre><code class="language-C++">int main(int argc, char **argv)
+{
+   try
+   {
+     ...
+      app().register_plugin&lt;wallet_api_plugin&gt;();
+      if (!app().initialize&lt;wallet_plugin, wallet_api_plugin, http_plugin&gt;(argc, argv))
+         return -1;
+       ...
+      app().startup();
+      app().exec();
+   }
+   catch (...){...}
+   return 0;
+}
+</code></pre>
+<p>好了，nodeos和keosd就先讲到这里了,欢迎关注本公众号，共同学习公链源码！也欢迎加入我们的微信群，共同学习交流<br>
+pic</p>
 ]]></summary>
-        <content type="html"><![CDATA[<p>👏  欢迎使用 <strong>Gridea</strong> ！<br>
-✍️  <strong>Gridea</strong> 一个静态博客写作客户端。你可以用它来记录你的生活、心情、知识、笔记、创意... ...</p>
+        <content type="html"><![CDATA[<p>EOS是Block.One公司开发的一款超高性能的类操作系统区块链，其设计目标是：支持大量用户，可能是上亿级别的用户， 消除手续费（可以免费使用），超高性能（支持百万级TPS），具备横向和纵向性能扩展能力。本篇文章讲解EOS源码的整体结构中nodeos和keosd部分，后面会有一篇讲cleos的文章。</p>
+<p>EOS由一些列的程序组成，最重要的是三个三个便是：nodeos，cleos，keosd</p>
+<ul>
+<li>nodeos (node + eos = nodeos), eos主节点程序</li>
+<li>cleos (cli + eos = cleos), 命令行程序，用来作为管理发送命令来管理钱包和节点</li>
+<li>keos (key + eos = keosd), 安全的存储keys的钱包组件<br>
+它们的协作关系如下图所示：</li>
+</ul>
+<p>[]jkjkjk</p>
+<p>它们都在<a href="https://github.com/EOSIO/eos">EOS</a>中：</p>
+<p>pragram picture</p>
+<p>1.nodeos</p>
+<p>1.1 整个程序入口</p>
+<pre><code class="language-C++">int main(int argc, char **argv)
+{
+    try
+    {
+        //设定版本号
+        app().set_version(eosio::nodeos::config::version);
+
+        //创建文件存储路径
+        auto root = fc::app_path();
+        app().set_default_data_dir(root / &quot;eosio&quot; / nodeos::config::node_executable_name / &quot;data&quot;);
+        app().set_default_config_dir(root / &quot;eosio&quot; / nodeos::config::node_executable_name / &quot;config&quot;);
+        //设定RPC监听endpoint
+        http_plugin::set_defaults({.default_unix_socket_path = &quot;&quot;, .default_http_port = 8888});
+        //初始化最核心的三个插件
+        if (!app().initialize&lt;chain_plugin, net_plugin, producer_plugin&gt;(argc, argv))
+            return INITIALIZE_FAIL;
+        //初始化日志系统
+        initialize_logging();
+        ...
+        ilog(&quot;${name} using configuration file ${c}&quot;, (&quot;name&quot;, nodeos::config::node_executable_name)( &quot;c&quot;, app().full_config_file_path().string()));
+        ...
+        //启动程序
+        app().startup();
+        //维持程序一直运行不停下
+        app().exec();
+    }
+    catch (const extract_genesis_state_exception &amp;e)
+    {
+        ....
+    }
+
+    ilog(&quot;${name} successfully exiting&quot;, (&quot;name&quot;, nodeos::config::node_executable_name));
+    return SUCCESS;
+}
+</code></pre>
+<p>1.2 nodeos application的实例：app()</p>
+<p>在libraries/appbase/include/appbase/application.hpp中能看到app()是一个全局变量</p>
+<pre><code class="language-C++">namespace appbase
+{
+...
+class application{...};
+
+//appbase唯一的全局变量
+application &amp;app();
+
+template &lt;typename Impl&gt;
+class plugin : public abstract_plugin{...};
+
+template &lt;typename Data, typename DispatchPolicy&gt;
+void channel&lt;Data, DispatchPolicy&gt;::publish(int priority, const Data &amp;data){...}
+
+} // namespace appbase
+
+</code></pre>
+<p>看看这个唯一的全局变量干了什么</p>
+<pre><code class="language-C++">application &amp;application::instance()
+{
+    static application _app;
+    return _app;
+}
+application &amp;app() { return application::instance(); }
+</code></pre>
+<p>可以看到它是把application对象使用单例模式实例化了，我们简单看看application类的结构</p>
+<pre><code class="language-C++">class application
+{
+public:
+    ~application();
+    
+    //配置处理方法
+    void set_version(uint64_t version);
+    ...
+    bfs::path full_config_file_path() const;
+
+    //处理起停方法
+    void set_sighup_callback(std::function&lt;void()&gt; callback);
+    bool initialize(int argc, char **argv){...}
+    void startup();
+    void shutdown();
+    void exec();
+    void quit();
+    bool is_quiting() const;
+    ...
+
+    //plugin处理方法
+    abstract_plugin *find_plugin(const string &amp;name) const;
+    abstract_plugin &amp;get_plugin(const string &amp;name) const;
+    auto &amp;register_plugin(){...}
+    Plugin *find_plugin() const {...}
+    Plugin &amp;get_plugin() const{...}
+
+    //绑定io_serv和pri_queue.wrap
+    template &lt;typename Func&gt;
+    auto post(int priority, Func &amp;&amp;func)
+    {
+        return boost::asio::post(*io_serv, pri_queue.wrap(priority, std::forward&lt;Func&gt;(func)));
+    }
+
+    //其他
+    ...
+
+private:
+    application();
+    //管理plugin 
+    map&lt;string, std::unique_ptr&lt;abstract_plugin&gt;&gt; plugins;
+    vector&lt;abstract_plugin *&gt; initialized_plugins; 
+    vector&lt;abstract_plugin *&gt; running_plugins; 
+    ...
+    //后面讲exe()用到
+    std::shared_ptr&lt;boost::asio::io_service&gt; io_serv;
+    execution_priority_queue pri_queue;
+    //application_impl 实例指针
+    std::unique_ptr&lt;class application_impl&gt; my;
+};
+</code></pre>
+<p>可以看到里面除了application基本功能的方法，还有很多plugin相关的内容。我们看它怎么用起来</p>
+<p>1.3 plugin的使用从这里开始：app().initialize&lt;...&gt;(argc, argv)，我们追查进去</p>
+<pre><code class="language-C++">//实现如下
+template &lt;typename... Plugin&gt;
+bool initialize(int argc, char **argv)
+{
+    return initialize_impl(argc, argv, {find_plugin&lt;Plugin&gt;()...});
+}
+
+//看find_plugin&lt;Plugin&gt;()...
+template &lt;typename Plugin&gt;
+Plugin *find_plugin() const
+{
+    string name = boost::core::demangle(typeid(Plugin).name());
+    return dynamic_cast&lt;Plugin *&gt;(find_plugin(name));
+}
+
+//看find_plugin(name)
+abstract_plugin *application::find_plugin(const string &amp;name) const
+{
+    auto itr = plugins.find(name);
+    if (itr == plugins.end())
+    {
+        return nullptr;
+    }
+    return itr-&gt;second.get();
+}
+
+//还有initialize_impl
+bool application::initialize_impl(int argc, char **argv, vector&lt;abstract_plugin *&gt; autostart_plugins)
+{
+    set_program_options();
+    ...
+    //这里从启动命令行或者配置文件中获取需要的plugin
+    if (options.count(&quot;plugin&quot;) &gt; 0)
+    {
+        auto plugins = options.at(&quot;plugin&quot;).as&lt;std::vector&lt;std::string&gt;&gt;();
+        for (auto &amp;arg : plugins)
+        {
+            vector&lt;string&gt; names;
+            boost::split(names, arg, boost::is_any_of(&quot; \t,&quot;));
+            for (const std::string &amp;name : names)
+                get_plugin(name).initialize(options);
+        }
+    }
+    try
+    {
+        //这里是app().initialize&lt;...&gt;中传入的三个plugin
+        for (auto plugin : autostart_plugins)
+            if (plugin != nullptr &amp;&amp; plugin-&gt;get_state() == abstract_plugin::registered)
+                plugin-&gt;initialize(options);
+                
+        ...
+    }
+    catch (...) {...}
+
+    return true;
+}
+
+//看plugin.initialize(options),在plugin中
+virtual void initialize(const variables_map &amp;options) override
+{
+    //_state的默认值设定的就是abstract_plugin::registered
+    if (_state == registered)
+    {
+        _state = initialized;
+        static_cast&lt;Impl *&gt;(this)-&gt;plugin_requires([&amp;](auto &amp;plug) { plug.initialize(options); });
+        static_cast&lt;Impl *&gt;(this)-&gt;plugin_initialize(options);
+        app().plugin_initialized(*this);
+    }
+    assert(_state == initialized);
+}
+
+//看app().plugin_initialized(*this);
+void plugin_initialized(abstract_plugin &amp;plug) { initialized_plugins.push_back(&amp;plug); }
+</code></pre>
+<p>由此我们可以看到app().initialize做的事情，就是找到需要的插件，然后注册注册插件依赖的插件，然后将它们存到appllication的initialized_plugins中</p>
+<p>1.4 启动application: app().startup(), 就是调用appllication的initialized_plugins每个plugin的startup方法，使得需要的plugin都运行起来</p>
+<pre><code class="language-C++">void application::startup()
+{
+    try
+    {
+        for (auto plugin : initialized_plugins)
+        {
+            if (is_quiting())
+                break;
+            plugin-&gt;startup();
+        }
+    }
+    catch (...){...}
+}
+</code></pre>
+<p>1.5 开始运行：app().exec();</p>
+<pre><code class="language-C++">void application::exec()
+{
+    boost::asio::io_service::work work(*io_serv);
+    (void)work;
+    bool more = true;
+    while (more || io_serv-&gt;run_one())
+    {
+        while (io_serv-&gt;poll_one())
+        {
+        }
+        // execute the highest priority item
+        more = pri_queue.execute_highest();
+    }
+
+    shutdown(); /// perform synchronous shutdown
+    io_serv.reset();
+}
+</code></pre>
+<p>boost::asio::io_service::work使得io_serv不会执行完任务就立即退出，保证nodeos一直运行着，exec()里面还包含shutdown(),运行时，调用每个plugin的shutdown(),然后从aplication的pulgins中移除，然后清空running_plugins，initialized_plugins，plugins。最后调用io_serv.stop()</p>
+<p>1.6 执行所有的任务: pri_queue.execute_highest();</p>
+<p>nodeos使用io_serv和pri_queue，通过app().post(...)将任务添加进来，这些任务包含处理P2P信息，所有RPC请求，处理进来的交易等,包含了大部分nodeos要做的事情。<br>
+我们抽取几个重要部分的代码。将实现过程展现出来，对于boost::asio::io_service不了解的同学还请自行查找资料学习，里面的东西很多。</p>
+<pre><code class="language-C++">//appbase/application.hpp中将io_serv和pri_queue绑定在一起，
+//将pri_queue中的任务通过app().post()传入io_serv中。
+//pri_queue是nodeos自己实现了一个优先级队列
+template &lt;typename Func&gt;
+    auto post(int priority, Func &amp;&amp;func)
+    {
+        return boost::asio::post(*io_serv, pri_queue.wrap(priority, std::forward&lt;Func&gt;(func)));
+    }
+
+//pri_queue的实现过程
+//定义优先级别，咱们在之前的RPC运行讲解时就曾看到过
+struct priority
+{
+    static constexpr int high = 100;
+    static constexpr int medium = 50;
+    static constexpr int low = 10;
+};
+
+//我们简取部分重要代码
+class execution_priority_queue : public boost::asio::execution_context
+{
+public:
+    //handlers_就是用来存储优先级和具体队列的地方，后面能看到定义
+    template &lt;typename Function&gt;
+    void add(int priority, Function function)
+    {
+        std::unique_ptr&lt;queued_handler_base&gt; handler(
+            //组建带有优先级的任务的queued_handler
+            new queued_handler&lt;Function&gt;(priority, --order_, std::move(function)));
+
+        //添加新的带有优先级的任务(方法)
+        handlers_.push(std::move(handler));
+    }
+    
+    //执行所有任务
+    void execute_all()
+    {
+        while (!handlers_.empty())
+        {
+            handlers_.top()-&gt;execute();
+            handlers_.pop();
+        }
+    }
+
+    //执行优先级最高的方法，app().exec()里面调用的就是这里
+    bool execute_highest()
+    {
+        if (!handlers_.empty())
+        {
+            handlers_.top()-&gt;execute();
+            handlers_.pop();
+        }
+
+        return !handlers_.empty();
+    }
+
+    //查看总共有多少任务
+    size_t size() { return handlers_.size(); }
+
+    class executor
+    {
+    public:
+        executor(execution_priority_queue &amp;q, int p)
+            : context_(q), priority_(p)
+        {
+        }
+
+        execution_priority_queue &amp;context() const noexcept
+        {
+            return context_;
+        }
+
+        ...
+        template &lt;typename Function, typename Allocator&gt;
+        void post(Function f, const Allocator &amp;) const
+        {
+            //添加带有优先级的任务(方法)
+            context_.add(priority_, std::move(f));
+        }
+        ...
+
+        //比较优先级的重载
+        bool operator==(const executor &amp;other) const noexcept
+        {
+            return &amp;context_ == &amp;other.context_ &amp;&amp; priority_ == other.priority_;
+        }
+        ...
+
+    private:
+        execution_priority_queue &amp;context_;
+        int priority_;
+    };
+
+    //这里就是绑定io_serv和pri_queue调用的方法
+    template &lt;typename Function&gt;
+    boost::asio::executor_binder&lt;Function, executor&gt;
+    wrap(int priority, Function &amp;&amp;func)
+    {
+        return boost::asio::bind_executor(executor(*this, priority), std::forward&lt;Function&gt;(func));
+    }
+
+private:
+    class queued_handler_base
+    {
+    public:
+        ...
+
+        //比较优先级的重载
+        friend bool operator&lt;(const std::unique_ptr&lt;queued_handler_base&gt; &amp;a,
+                              const std::unique_ptr&lt;queued_handler_base&gt; &amp;b) noexcept
+        {
+            return std::tie(a-&gt;priority_, a-&gt;order_) &lt; std::tie(b-&gt;priority_, b-&gt;order_);
+        }
+
+    private:
+        int priority_;
+        size_t order_;
+    };
+
+    template &lt;typename Function&gt;
+    class queued_handler : public queued_handler_base
+    {
+    public:
+        queued_handler(int p, size_t order, Function f)
+            : queued_handler_base(p, order), function_(std::move(f))
+        {
+        }
+
+        //执行任务(方法)
+        void execute() override
+        {
+            function_();
+        }
+
+    private:
+        Function function_;
+    };
+
+    //保存所有任务和优先级的handlers_
+    std::priority_queue&lt;std::unique_ptr&lt;queued_handler_base&gt;, std::deque&lt;std::unique_ptr&lt;queued_handler_base&gt;&gt;&gt; handlers_;
+    std::size_t order_ = std::numeric_limits&lt;size_t&gt;::max(); // to maintain FIFO ordering in queue within priority
+};
+</code></pre>
+<p>1.7 再来说一下plugin结构，每个plugin都继承于abstract_plugin，结构如下，从上面的讲解中能看出app()是怎么使用的</p>
+<pre><code class="language-C++">namespace appbase {
+   class abstract_plugin {
+      public:
+         enum state {
+            registered, ///&lt; the plugin is constructed but doesn't do anything
+            initialized, ///&lt; the plugin has initialized any state required but is idle
+            started, ///&lt; the plugin is actively running
+            stopped ///&lt; the plugin is no longer running
+         };
+
+         virtual ~abstract_plugin(){}
+         virtual state get_state()const = 0;
+         virtual const std::string&amp; name()const  = 0;
+         virtual void set_program_options( options_description&amp; cli, options_description&amp; cfg ) = 0;
+         virtual void initialize(const variables_map&amp; options) = 0;
+         virtual void handle_sighup() = 0;
+         virtual void startup() = 0;
+         virtual void shutdown() = 0;
+   };
+}
+</code></pre>
+<p>2.keosd</p>
+<p>2.1 keosd的机构和nodeos的一样只是启动的时候用的是wallet_plugin, wallet_api_plugin和http_plugin</p>
+<pre><code class="language-C++">int main(int argc, char **argv)
+{
+   try
+   {
+     ...
+      app().register_plugin&lt;wallet_api_plugin&gt;();
+      if (!app().initialize&lt;wallet_plugin, wallet_api_plugin, http_plugin&gt;(argc, argv))
+         return -1;
+       ...
+      app().startup();
+      app().exec();
+   }
+   catch (...){...}
+   return 0;
+}
+</code></pre>
+<p>好了，nodeos和keosd就先讲到这里了,欢迎关注本公众号，共同学习公链源码！也欢迎加入我们的微信群，共同学习交流<br>
+pic</p>
 <!-- more -->
-<p><a href="https://github.com/getgridea/gridea">Github</a><br>
-<a href="https://gridea.dev/">Gridea 主页</a><br>
-<a href="http://fehey.com/">示例网站</a></p>
-<h2 id="特性">特性👇</h2>
-<p>📝  你可以使用最酷的 <strong>Markdown</strong> 语法，进行快速创作</p>
-<p>🌉  你可以给文章配上精美的封面图和在文章任意位置插入图片</p>
-<p>🏷️  你可以对文章进行标签分组</p>
-<p>📋  你可以自定义菜单，甚至可以创建外部链接菜单</p>
-<p>💻  你可以在 <strong>Windows</strong>，<strong>MacOS</strong> 或 <strong>Linux</strong> 设备上使用此客户端</p>
-<p>🌎  你可以使用 <strong>𝖦𝗂𝗍𝗁𝗎𝖻 𝖯𝖺𝗀𝖾𝗌</strong> 或 <strong>Coding Pages</strong> 向世界展示，未来将支持更多平台</p>
-<p>💬  你可以进行简单的配置，接入 <a href="https://github.com/gitalk/gitalk">Gitalk</a> 或 <a href="https://github.com/SukkaW/DisqusJS">DisqusJS</a> 评论系统</p>
-<p>🇬🇧  你可以使用<strong>中文简体</strong>或<strong>英语</strong></p>
-<p>🌁  你可以任意使用应用内默认主题或任意第三方主题，强大的主题自定义能力</p>
-<p>🖥  你可以自定义源文件夹，利用 OneDrive、百度网盘、iCloud、Dropbox 等进行多设备同步</p>
-<p>🌱 当然 <strong>Gridea</strong> 还很年轻，有很多不足，但请相信，它会不停向前 🏃</p>
-<p>未来，它一定会成为你离不开的伙伴</p>
-<p>尽情发挥你的才华吧！</p>
-<p>😘 Enjoy~</p>
 ]]></content>
     </entry>
 </feed>
